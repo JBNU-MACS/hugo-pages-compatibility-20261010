@@ -6,7 +6,7 @@
   "slug": "hugo-profile",
   "npm": [],
   "asset_build": [],
-  "generator": "3.0",
+  "generator": "3.1",
   "repo": "https://github.com/JBNU-MACS/hugo-pages-compatibility-20261010.git",
   "baseURL": "https://jbnu-macs.github.io/hugo-pages-compatibility-20261010/",
   "audited": true
