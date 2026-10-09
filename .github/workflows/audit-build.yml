@@ -1,0 +1,83 @@
+name: Build all Mac-prepared Hugo themes
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        include:
+          - shard: 0
+            group: 0
+          - shard: 1
+            group: 0
+          - shard: 2
+            group: 0
+          - shard: 3
+            group: 0
+          - shard: 4
+            group: 1
+          - shard: 5
+            group: 1
+          - shard: 6
+            group: 1
+          - shard: 7
+            group: 1
+          - shard: 8
+            group: 2
+          - shard: 9
+            group: 2
+          - shard: 10
+            group: 2
+          - shard: 11
+            group: 2
+          - shard: 12
+            group: 3
+          - shard: 13
+            group: 3
+          - shard: 14
+            group: 3
+          - shard: 15
+            group: 3
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: actions/configure-pages@v6
+        id: pages
+      - name: Install shared build tools
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/sass" "$RUNNER_TEMP/shared-tools"
+          curl -fL --retry 3 https://github.com/sass/dart-sass/releases/download/1.105.0/dart-sass-1.105.0-linux-x64.tar.gz | tar -xz -C "$RUNNER_TEMP/sass"
+          cd "$RUNNER_TEMP/shared-tools"
+          npm install --ignore-scripts --no-audit --no-fund postcss-cli@11 postcss@8 autoprefixer@10 @tailwindcss/cli@4 pagefind@1.5.2
+          echo "$RUNNER_TEMP/sass/dart-sass" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/shared-tools/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Build exact Git snapshots prepared on macOS
+        env:
+          SITE_BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: python qa/runner.py build --shard ${{ matrix.shard }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: site-${{ matrix.group }}-${{ matrix.shard }}
+          path: audit-output
+          include-hidden-files: true
+          retention-days: 3

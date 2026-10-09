@@ -1,0 +1,60 @@
+name: Publish and verify Hugo theme batch
+on:
+  workflow_dispatch:
+    inputs:
+      group:
+        description: Batch number
+        type: choice
+        options: ['0', '1', '2', '3']
+        required: true
+      build_run_id:
+        description: Successful build workflow run ID
+        required: true
+permissions:
+  contents: read
+  actions: read
+  pages: write
+  id-token: write
+concurrency:
+  group: audit-pages-publish
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/configure-pages@v6
+        id: pages
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: site-${{ inputs.group }}-*
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+          path: audit-output
+          merge-multiple: true
+      - name: Check all theme builds and create index
+        run: python qa/runner.py assemble --group ${{ inputs.group }}
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: audit-output/site
+      - uses: actions/deploy-pages@v5
+        id: deployment
+      - name: Verify live HTML, assets and internal pages
+        env:
+          SITE_BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: python qa/runner.py live --group ${{ inputs.group }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: deployment-evidence-${{ inputs.group }}
+          path: audit-output/reports
+          retention-days: 7
