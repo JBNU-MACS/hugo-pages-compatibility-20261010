@@ -1,0 +1,13 @@
+{
+  "config": "hugo.yaml,pages.json",
+  "theme": "template",
+  "sample": "exampleSite",
+  "version": "0.143.0",
+  "slug": "hugo-profile",
+  "npm": [],
+  "asset_build": [],
+  "generator": "3.0",
+  "repo": "https://github.com/JBNU-MACS/hugo-pages-compatibility-20261010.git",
+  "baseURL": "https://jbnu-macs.github.io/hugo-pages-compatibility-20261010/",
+  "audited": true
+}
