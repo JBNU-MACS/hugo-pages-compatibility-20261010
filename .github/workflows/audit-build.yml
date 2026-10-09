@@ -74,10 +74,13 @@ jobs:
         env:
           SITE_BASE_URL: ${{ steps.pages.outputs.base_url }}
         run: python qa/runner.py build --shard ${{ matrix.shard }}
+      - name: Pack output preserving valid Linux URL filenames
+        if: always()
+        run: tar -cf bundle-${{ matrix.shard }}.tar -C audit-output .
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: site-${{ matrix.group }}-${{ matrix.shard }}
-          path: audit-output
+          path: bundle-${{ matrix.shard }}.tar
           include-hidden-files: true
           retention-days: 3

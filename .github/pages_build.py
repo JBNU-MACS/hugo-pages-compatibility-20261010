@@ -80,7 +80,9 @@ def source_digest(root):
     records = []
     for directory, dirs, files in os.walk(root):
         dirs[:] = [d for d in dirs if d not in ('.git', 'node_modules', 'public', '__pycache__', BACKUPS)]
-        for name in files:
+        linked_dirs = [name for name in dirs if (Path(directory) / name).is_symlink()]
+        dirs[:] = [name for name in dirs if name not in linked_dirs]
+        for name in files + linked_dirs:
             if name in ('prepare_github_pages.py', '.DS_Store', STATE):
                 continue
             file = Path(directory) / name
@@ -137,11 +139,38 @@ def choose_source(root, entry):
     raise ValueError('Hugo 테마/사이트를 찾지 못했습니다. ZIP을 푼 최상위 폴더에서 실행하세요.')
 
 
-def copy_tree(source, dest, root_excludes=()):
-    """Never copy Git metadata, dependencies, generated output, or outside symlinks."""
+ARCHIVE_LINKS = {'risotto': {'exampleSite/content/_index.md': '../../README.md'}, 'blox-tailwind': {'CLAUDE.md': 'AGENTS.md'}, 'hugo-black-and-light-theme': {'exampleSite/themes/black-and-light': '../..'}, 'hugo-primer-blog': {'exampleSite/themes/hugo-primer-blog': '../..'}, 'hugo-techie-personal': {'exampleSite/themes/hugo-techie-personal': '../../'}, 'hugo-trainsh': {'exampleSite/themes/hugo-trainsh': '../../../hugo-trainsh'}, 'oink': {'tests/site/themes/oink': '../../..'}, 'hugo-simple': {'.claude/skills/agent-browser': '../../.agents/skills/agent-browser'}, 'hextra': {'CLAUDE.md': 'AGENTS.md'}, 'shizuka': {'exampleSite/themes/shizuka': '../../'}, 'indiepaper': {'exampleSite/themes/indiepaper': '../..'}, 'hugo-fortyten': {'exampleSite/themes/fortyten': '../../'}, 'slick': {'_sites/changelog/static/images/screenshot.png': '../../../../images/screenshot.png', '_sites/changelog/static/images/tn.png': '../../../../images/tn.png', '_sites/changelog/themes/slick': '../../../', '_sites/example/themes/slick': '../../../', 'exampleSite': '_sites/example'}, 'bilberry-hugo-theme': {'.github/README.md': '../v4/README.md'}, 'hugo-arcana': {'exampleSite/themes/hugo-arcana': '../../'}, 'tailbliss': {'exampleSite/themes/tailbliss': '..'}, 'gokarna': {'exampleSite/themes/gokarna': '../../'}, 'toph-hugo-theme': {'exampleSite/themes/toph': '../..'}}
+
+
+def copy_tree(source, dest, root_excludes=(), archive_root=None, archive_links=None, _seen=()):
+    """Materialize internal ZIP links and omit recursive local theme links."""
     source = long_path(source)
     dest = long_path(dest)
+    boundary = long_path(archive_root or source).resolve()
+    links = archive_links or {}
+    seen = set(_seen)
+    resolved_source = source.resolve()
+    if resolved_source in seen:
+        return
+    seen.add(resolved_source)
     always = {'.git', '.github', 'node_modules', 'public', '__pycache__', BACKUPS}
+
+    def link_target(src):
+        if src.is_symlink():
+            target = src.resolve()
+        else:
+            try:
+                rel = src.relative_to(boundary).as_posix()
+            except ValueError:
+                return None
+            value = links.get(rel)
+            if value is None or not src.is_file() or src.read_bytes() != value.encode('utf-8'):
+                return None
+            target = (src.parent / value).resolve()
+        if not target.is_relative_to(boundary):
+            raise ValueError(f'ZIP 밖의 파일을 가리키는 링크입니다: {src}')
+        return target
+
     for current, dirs, files in os.walk(source, followlinks=False):
         current = Path(current)
         rel = current.relative_to(source)
@@ -153,8 +182,11 @@ def copy_tree(source, dest, root_excludes=()):
             src = current / name
             if src.is_symlink():
                 dirs.remove(name)
-                # Repository symlinks to outside the archive cannot be restored from a ZIP.
-                raise ValueError(f'외부 의존 가능성이 있는 심볼릭 링크입니다: {src.relative_to(source)}')
+                target = link_target(src)
+                if target == current.resolve() or target in current.resolve().parents or target in seen:
+                    continue
+                copy_tree(target, target_dir / name.rstrip(' .'), archive_root=boundary,
+                          archive_links=links, _seen=seen)
         for name in files:
             if name in always or name in ('.gitignore', '.gitmodules', '.DS_Store', STATE,
                                            'prepare_github_pages.py', 'go.work', 'go.work.sum'):
@@ -162,14 +194,17 @@ def copy_tree(source, dest, root_excludes=()):
             if current == source and name.casefold() in {x.casefold() for x in root_excludes}:
                 continue
             src = current / name
-            if src.is_symlink():
-                resolved = src.resolve()
-                try:
-                    resolved.relative_to(source)
-                except ValueError:
-                    raise ValueError(f'ZIP 밖의 파일을 가리키는 링크입니다: {src}')
-                if not resolved.is_file():
+            target = link_target(src)
+            if target is not None:
+                if target.is_dir():
+                    if target == current.resolve() or target in current.resolve().parents or target in seen:
+                        continue
+                    copy_tree(target, target_dir / name.rstrip(' .'), archive_root=boundary,
+                              archive_links=links, _seen=seen)
+                    continue
+                if not target.is_file():
                     raise ValueError(f'깨진 링크입니다: {src}')
+                src = target
             shutil.copy2(src, target_dir / name.rstrip(' .'))
 
 
@@ -249,6 +284,10 @@ def restore_submodules(source, dest, excluded=()):
 
 
 def stage_site(root, site, entry, base):
+    def copy_source(source, destination, excludes=()):
+        boundary = root if source.resolve().is_relative_to(root.resolve()) else source
+        copy_tree(source, destination, excludes, archive_root=boundary,
+                  archive_links=ARCHIVE_LINKS.get(entry['slug'], {}))
     root, site = long_path(root), long_path(site)
     sample, theme = choose_source(root, entry)
     if entry.get('starter'):
@@ -258,25 +297,25 @@ def stage_site(root, site, entry, base):
         download_zip(entry['starter']['url'], sample, entry['starter']['sha256'])
     site.mkdir(parents=True, exist_ok=True)
     if sample:
-        copy_tree(sample, site, {'site', 'tmp'} if sample == root else ())
+        copy_source(sample, site, ({'site', 'tmp'} if sample == root else set()) | ({'themes'} if theme else set()))
         restore_submodules(sample, site)
     if theme:
         excluded = {'exampleSite', 'example-site', 'example', 'examples', 'docs', 'demo',
                     'test', 'tests', '.claude', '.watchfire', '.vscode', 'site', 'tmp'}
-        copy_tree(theme, site / 'themes/template', excluded)
+        copy_source(theme, site / 'themes/template', excluded)
         restore_submodules(theme, site / 'themes/template', excluded)
         if not sample:
             for name in CONFIGS + ('config', 'data', 'content', 'static', 'assets'):
                 src = root / name
                 if src.is_dir():
-                    copy_tree(src, site / name)
+                    copy_source(src, site / name)
                 elif src.is_file():
                     shutil.copy2(src, site / name)
             for name in ('example-config.toml', 'example-hugo.yaml'):
                 if (root / name).is_file():
                     shutil.copy2(root / name, site / ('hugo.toml' if name.endswith('toml') else 'hugo.yaml'))
             if (root / '_example').is_dir():
-                copy_tree(root / '_example', site / 'content')
+                copy_source(root / '_example', site / 'content')
         mod = re.search(r'^module\s+(\S+)', read_text(theme / 'go.mod'))
         canonical = entry.get('repo', '').removeprefix('https://').removesuffix('.git')
         if not mod and canonical.startswith('github.com/') and canonical in read_text(site / 'go.mod'):
@@ -339,7 +378,7 @@ def stage_site(root, site, entry, base):
             source = root / src
             target = site / dst
             if source.is_dir():
-                copy_tree(source, target)
+                copy_source(source, target)
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
