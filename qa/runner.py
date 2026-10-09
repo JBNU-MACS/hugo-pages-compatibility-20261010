@@ -84,6 +84,9 @@ def build(shard_id,base):
  return 0 if all(x['status']=='passed' for x in results) else 1
 
 def assemble(group):
+ for archive in (ROOT/'audit-output').glob('bundle-*.tar'):
+  extract(archive,ROOT/'audit-output')
+  archive.unlink()
  site=ROOT/'audit-output/site';reports=ROOT/'audit-output/reports';results=[]
  for p in reports.glob('shard-*.json'):results.extend(json.loads(p.read_text()))
  manifest=json.loads((ROOT/'qa/manifest.json').read_text());expected={r['slug'] for s in manifest['shards'] if s['group']==group for r in s['themes']}
