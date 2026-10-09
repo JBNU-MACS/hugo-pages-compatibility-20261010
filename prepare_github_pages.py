@@ -150,6 +150,8 @@ def copy_tree(source, dest, root_excludes=(), archive_root=None, archive_links=N
     links = archive_links or {}
     seen = set(_seen)
     resolved_source = source.resolve()
+    if not resolved_source.is_relative_to(boundary):
+        raise ValueError(f'ZIP 밖의 폴더를 가리키는 링크입니다: {source}')
     if resolved_source in seen:
         return
     seen.add(resolved_source)
@@ -285,7 +287,7 @@ def restore_submodules(source, dest, excluded=()):
 
 def stage_site(root, site, entry, base):
     def copy_source(source, destination, excludes=()):
-        boundary = root if source.resolve().is_relative_to(root.resolve()) else source
+        boundary = sample if entry.get('starter') and source.is_relative_to(sample) else root
         copy_tree(source, destination, excludes, archive_root=boundary,
                   archive_links=ARCHIVE_LINKS.get(entry['slug'], {}))
     root, site = long_path(root), long_path(site)
